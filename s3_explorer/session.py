@@ -19,13 +19,17 @@ signature on ranged S3 GETs.
 
 import base64
 import binascii
+import ipaddress
 import json
 import os
+import socket
 import time
 import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlparse
 
 import boto3
 import requests
@@ -51,6 +55,45 @@ class StsRefused(Exception):
     def __init__(self, code, message):
         super().__init__(f"{code}: {message}")
         self.code, self.message = code, message
+
+
+class Unreachable(RuntimeError):
+    """A service that can't be reached from this machine, with what's needed to fix it."""
+
+
+TIMEOUT = (10, 30)       # seconds: connect, read. A host that can't be reached fails in 10 s.
+
+
+def within(seconds, fn, *args):
+    """fn(*args), or None if it takes longer than `seconds` (DNS lookups have no timeout of their own)."""
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(fn, *args).result(timeout=seconds)
+    except Exception:  # noqa: BLE001 — a diagnostic that fails just isn't shown
+        return None
+    finally:
+        pool.shutdown(wait=False)
+
+
+def public_ip(http):
+    """This machine's public IP address as the internet sees it, for allow-lists; None if unknown."""
+    return within(5, lambda: http.get("https://checkip.amazonaws.com", timeout=5).text.strip() or None)
+
+
+def unreachable(url, error, http):
+    """An Unreachable error naming the host, what it resolves to, and this machine's public IP."""
+    host = urlparse(url).hostname
+    addrs = within(5, lambda: sorted({a[4][0] for a in socket.getaddrinfo(host, 443)}))
+    if addrs:
+        private = all(ipaddress.ip_address(a).is_private and not ipaddress.ip_address(a).is_loopback for a in addrs)
+        where = f"{host} resolves to {', '.join(addrs)}" + (
+            " (private addresses: only reachable from inside that network)" if private else "")
+    else:
+        where = f"{host} does not resolve here (DNS)"
+    ip = public_ip(http)
+    return Unreachable(f"Cannot reach {url}: {type(error).__name__}. {where}. "
+                       + (f"This machine's public IP address is {ip}: if {host} only accepts listed addresses, "
+                          "add that one." if ip else "This machine's public IP address could not be determined."))
 
 
 def find_config(name, here=None):
@@ -128,6 +171,14 @@ class AssumeRoleSession:
         self.http = requests.Session()
         self.http.trust_env = False   # direct: ignore http(s)_proxy, no_proxy and REQUESTS_CA_BUNDLE
 
+    def _request(self, method, url, **kwargs):
+        """One HTTP call with a connect timeout; a network failure becomes an Unreachable error."""
+        kwargs.setdefault("timeout", TIMEOUT)
+        try:
+            return self.http.request(method, url, **kwargs)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            raise unreachable(url, e, self.http) from None
+
     def _route(self, via):
         """requests/botocore proxy and TLS settings for one service: direct, or through its proxy."""
         if not via:
@@ -146,6 +197,7 @@ class AssumeRoleSession:
         """Use the cached credential if it's still valid, otherwise log in and ask STS."""
         if not force and self.load_cached():
             return self.creds
+        print(f"Signing in with {self.cfg['oidc_issuer']} …", flush=True)
         start = self.login_start()
         display(Markdown(f"### 👉 [Click here to sign in]({start['url']})\n\n"
                          f"Code: **`{start['user_code']}`** — waiting for you…"))
@@ -158,6 +210,7 @@ class AssumeRoleSession:
             time.sleep(interval)
             state = self.login_poll()
             if state == "done":
+                print("Approved; STS issued a credential.", flush=True)
                 return self.creds
             if state == "slow_down":
                 interval += 5
@@ -183,11 +236,8 @@ class AssumeRoleSession:
                 "WebIdentityToken": web_identity_token, "DurationSeconds": "3600"}
         if self.cfg["provider_id"]:
             form["ProviderId"] = self.cfg["provider_id"]
-        try:
-            proxies, verify = self._route(self.cfg["sts_via"])
-            resp = self.http.post(url, timeout=30, proxies=proxies, verify=verify, data=form)
-        except requests.exceptions.ConnectionError as e:
-            raise RuntimeError(f"Cannot reach STS at {url} ({type(e).__name__}).") from None
+        proxies, verify = self._route(self.cfg["sts_via"])
+        resp = self._request("POST", url, proxies=proxies, verify=verify, data=form)
         try:
             root = ET.fromstring(resp.text)
         except ET.ParseError:
@@ -218,7 +268,7 @@ class AssumeRoleSession:
         """The provider's OpenID Connect discovery document (fetched once)."""
         if self._oidc is None:
             issuer = self.cfg["oidc_issuer"].rstrip("/")
-            resp = self.http.get(f"{issuer}/.well-known/openid-configuration", timeout=15)
+            resp = self._request("GET", f"{issuer}/.well-known/openid-configuration")
             resp.raise_for_status()
             self._oidc = resp.json()
             if not self._oidc.get("device_authorization_endpoint"):
@@ -227,8 +277,8 @@ class AssumeRoleSession:
 
     def login_start(self):
         auth = client_auth(self.creds_file)
-        resp = self.http.post(self.oidc()["device_authorization_endpoint"], data={**auth, "scope": "openid"},
-                              headers={"Accept": "application/json"}, timeout=15)
+        resp = self._request("POST", self.oidc()["device_authorization_endpoint"], data={**auth, "scope": "openid"},
+                             headers={"Accept": "application/json"})
         resp.raise_for_status()
         dev = resp.json()
         self._device = {**dev, "auth": auth, "deadline": time.time() + int(dev.get("expires_in", 600))}
@@ -243,10 +293,10 @@ class AssumeRoleSession:
         if time.time() > dev["deadline"]:
             self._device = None
             raise TimeoutError("The sign-in link expired. Start again.")
-        body = self.http.post(self.oidc()["token_endpoint"],
-                              data={"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                                    "device_code": dev["device_code"], **dev["auth"]},
-                              headers={"Accept": "application/json"}, timeout=15).json()
+        body = self._request("POST", self.oidc()["token_endpoint"],
+                             data={"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                                   "device_code": dev["device_code"], **dev["auth"]},
+                             headers={"Accept": "application/json"}).json()
         if "error" in body:
             if body["error"] in ("authorization_pending", "slow_down"):
                 return "slow_down" if body["error"] == "slow_down" else "pending"
@@ -273,7 +323,8 @@ class AssumeRoleSession:
                 verify=verify,
                 # {} rather than None stops botocore falling back to https_proxy
                 config=Config(signature_version="s3v4", s3={"addressing_style": "path"},
-                              retries={"max_attempts": 2, "mode": "standard"}, proxies=proxies))
+                              retries={"max_attempts": 2, "mode": "standard"}, proxies=proxies,
+                              connect_timeout=TIMEOUT[0], read_timeout=TIMEOUT[1]))
         return self._client
 
 
