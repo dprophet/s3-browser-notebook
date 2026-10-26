@@ -40,9 +40,8 @@ REQUIRED = ("client_id", "oidc_issuer", "sts_endpoint", "s3_endpoint", "role_arn
 # http(s)_proxy from the environment is never used.
 # ca_bundle: only for a service behind a proxy, which re-signs TLS with its own CA. Direct
 # connections use the public CAs (certifi).
-# maven_repository: where Spark downloads the S3A connector, if Maven Central isn't reachable.
 OPTIONAL = {"provider_id": None, "extra_buckets": [], "sts_via": None, "s3_endpoint_via": None,
-            "ca_bundle": "/etc/ssl/certs/ca-certificates.crt", "maven_repository": None}
+            "ca_bundle": "/etc/ssl/certs/ca-certificates.crt"}
 STS_NS = {"sts": "https://sts.amazonaws.com/doc/2011-06-15/"}
 CONFIG_ENV = "S3_ASSUMEROLE_CONFIG_B64"
 

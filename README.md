@@ -83,8 +83,7 @@ chmod 600 .secrets/credentials.json
 | `bucket` | The bucket the notebooks use |
 
 Optional: `provider_id` (the `ProviderId` parameter of `AssumeRoleWithWebIdentity`, if your STS wants
-one), `extra_buckets` (more buckets to offer in the explorer) and `maven_repository` (a Maven mirror
-for the PySpark notebook, if Maven Central isn't reachable).
+one) and `extra_buckets` (more buckets to offer in the explorer).
 
 Instead of the file, the same JSON can be passed base64-encoded in the environment variable
 `S3_ASSUMEROLE_CONFIG_B64`; when it is set it wins over the file. The notebooks never print the
