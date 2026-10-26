@@ -1,0 +1,20 @@
+# Sign-in, STS and S3
+boto3>=1.43
+requests>=2.34
+
+# s3-browser-demo.ipynb: the explorer widget (s3_explorer/)
+anywidget>=0.11
+
+# s3-boto3-demo.ipynb: the dataset steps
+pandas>=2.2
+pyarrow>=20
+
+# s3-pyspark-demo.ipynb (needs Java 17+; downloads hadoop-aws on first run)
+pyspark>=4.2,<4.3
+
+# Jupyter
+jupyterlab>=4.6
+ipykernel>=7.4
+
+# Strips cell outputs on commit (see README: "nbstripout --install")
+nbstripout>=0.9

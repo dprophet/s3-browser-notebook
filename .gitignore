@@ -1,0 +1,12 @@
+# The config holds your OAuth client; never commit it
+.secrets/
+
+.venv/
+venv/
+__pycache__/
+.ipynb_checkpoints/
+
+# Spark's local files
+spark-warehouse/
+metastore_db/
+derby.log
