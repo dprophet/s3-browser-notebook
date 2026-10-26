@@ -96,14 +96,17 @@ config.
 1. Optional: add a Codespaces secret named `S3_ASSUMEROLE_CONFIG_B64` with the output of
    `base64 -w0 credentials.json` (repository or user settings → Codespaces → secrets). The
    codespace offers to set it when you create one.
-2. Click **Open in GitHub Codespaces** above. The container installs the requirements and Java.
+2. Click **Open in GitHub Codespaces** above. The container installs Java and runs `make setup`:
+   the requirements, plus the S3A connector for the PySpark notebook, so Spark starts without a
+   download.
 3. Without the secret, create `.secrets/credentials.json` in the codespace (see [Config](#config)).
 4. Open a notebook in VS Code and pick the Python 3.12 kernel, or run `make jupyter` and open the
    forwarded port 8888 for JupyterLab.
 
 ### Binder
 
-Click **Binder** above; it opens the S3 explorer in JupyterLab. Then upload your config to
+Click **Binder** above; it opens the S3 explorer in JupyterLab. The image is built with the S3A
+connector already downloaded (`postBuild`). Then upload your config to
 `.secrets/credentials.json` with JupyterLab's file browser.
 
 mybinder.org runs on shared public infrastructure, and the session (with your upload) is deleted
@@ -115,8 +118,8 @@ your provider, STS and S3 endpoint are reachable from the internet.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-make install          # pip install -r requirements.txt && nbstripout --install
-make jupyter
+make setup            # requirements + nbstripout, and the S3A connector for PySpark (once, ~670 MB)
+make jupyter          # runs setup first if requirements.txt changed
 ```
 
 The PySpark notebook needs Java 17 or newer. To pass the config as the environment variable instead
@@ -143,7 +146,7 @@ it opens (the link is shown in the notebook too), unless a cached credential is 
 
 ## Contributing
 
-Run `nbstripout --install` (or `make install`) before your first commit. Cell outputs contain
+Run `nbstripout --install` (or `make setup-python`) before your first commit. Cell outputs contain
 sign-in claims and bucket listings; the `.gitattributes` filter strips them on commit, but git
 silently skips a filter that isn't configured in your clone.
 

@@ -5,7 +5,8 @@
     // Java for the PySpark notebook
     "ghcr.io/devcontainers/features/java:1": { "version": "21" }
   },
-  "postCreateCommand": "pip install -r requirements.txt && nbstripout --install",
+  // installs the requirements and pre-downloads the S3A connector for the PySpark notebook
+  "postCreateCommand": "make setup",
   "forwardPorts": [8888],
   "portsAttributes": {
     "8888": { "label": "JupyterLab", "onAutoForward": "openBrowser" }

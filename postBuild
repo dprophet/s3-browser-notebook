@@ -1,0 +1,5 @@
+#!/bin/bash
+# mybinder.org (repo2docker) runs this after installing requirements.txt and apt.txt:
+# bake the PySpark notebook's S3A connector into the image, so its Spark session starts fast.
+set -euo pipefail
+python scripts/prefetch-spark.py

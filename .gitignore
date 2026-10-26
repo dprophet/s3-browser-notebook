@@ -10,3 +10,6 @@ __pycache__/
 spark-warehouse/
 metastore_db/
 derby.log
+
+# make setup markers
+.make/
