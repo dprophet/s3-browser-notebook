@@ -19,17 +19,13 @@ signature on ranged S3 GETs.
 
 import base64
 import binascii
-import ipaddress
 import json
 import os
-import socket
 import time
 import uuid
 import webbrowser
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from urllib.parse import urlparse
 
 import boto3
 import requests
@@ -57,43 +53,7 @@ class StsRefused(Exception):
         self.code, self.message = code, message
 
 
-class Unreachable(RuntimeError):
-    """A service that can't be reached from this machine, with what's needed to fix it."""
-
-
 TIMEOUT = (10, 30)       # seconds: connect, read. A host that can't be reached fails in 10 s.
-
-
-def within(seconds, fn, *args):
-    """fn(*args), or None if it takes longer than `seconds` (DNS lookups have no timeout of their own)."""
-    pool = ThreadPoolExecutor(max_workers=1)
-    try:
-        return pool.submit(fn, *args).result(timeout=seconds)
-    except Exception:  # noqa: BLE001 — a diagnostic that fails just isn't shown
-        return None
-    finally:
-        pool.shutdown(wait=False)
-
-
-def public_ip(http):
-    """This machine's public IP address as the internet sees it, for allow-lists; None if unknown."""
-    return within(5, lambda: http.get("https://checkip.amazonaws.com", timeout=5).text.strip() or None)
-
-
-def unreachable(url, error, http):
-    """An Unreachable error naming the host, what it resolves to, and this machine's public IP."""
-    host = urlparse(url).hostname
-    addrs = within(5, lambda: sorted({a[4][0] for a in socket.getaddrinfo(host, 443)}))
-    if addrs:
-        private = all(ipaddress.ip_address(a).is_private and not ipaddress.ip_address(a).is_loopback for a in addrs)
-        where = f"{host} resolves to {', '.join(addrs)}" + (
-            " (private addresses: only reachable from inside that network)" if private else "")
-    else:
-        where = f"{host} does not resolve here (DNS)"
-    ip = public_ip(http)
-    return Unreachable(f"Cannot reach {url}: {type(error).__name__}. {where}. "
-                       + (f"This machine's public IP address is {ip}: if {host} only accepts listed addresses, "
-                          "add that one." if ip else "This machine's public IP address could not be determined."))
 
 
 def find_config(name, here=None):
@@ -172,12 +132,8 @@ class AssumeRoleSession:
         self.http.trust_env = False   # direct: ignore http(s)_proxy, no_proxy and REQUESTS_CA_BUNDLE
 
     def _request(self, method, url, **kwargs):
-        """One HTTP call with a connect timeout; a network failure becomes an Unreachable error."""
-        kwargs.setdefault("timeout", TIMEOUT)
-        try:
-            return self.http.request(method, url, **kwargs)
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            raise unreachable(url, e, self.http) from None
+        """One HTTP call with a connect timeout, so an unreachable host fails instead of hanging."""
+        return self.http.request(method, url, timeout=TIMEOUT, **kwargs)
 
     def _route(self, via):
         """requests/botocore proxy and TLS settings for one service: direct, or through its proxy."""
