@@ -17,9 +17,15 @@ setup-spark: .make/spark
 	$(PYTHON) scripts/prefetch-spark.py
 	@mkdir -p .make && touch $@
 
-# JupyterLab on localhost only (Codespaces forwards the port for you)
+# JupyterLab on localhost only (Codespaces forwards the port for you). In a codespace it prints the
+# forwarded https URL instead of 127.0.0.1; port_retries=0 keeps it on 8888 so that URL is right.
+JUPYTER_PORT ?= 8888
+ifdef CODESPACE_NAME
+JUPYTER_URL := --ServerApp.custom_display_url=https://$(CODESPACE_NAME)-$(JUPYTER_PORT).$(GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN)
+endif
+
 jupyter: setup
-	jupyter lab --no-browser --ip=127.0.0.1 --port=8888
+	jupyter lab --no-browser --ip=127.0.0.1 --port=$(JUPYTER_PORT) --ServerApp.port_retries=0 $(JUPYTER_URL)
 
 # Prints the export line for the config, base64-encoded. make can't set variables in your shell,
 # so eval its output:   eval "$(make -s s3-env)"

@@ -101,7 +101,7 @@ config.
    download.
 3. Without the secret, create `.secrets/credentials.json` in the codespace (see [Config](#config)).
 4. Open a notebook in VS Code and pick the Python 3.12 kernel, or run `make jupyter` and open the
-   forwarded port 8888 for JupyterLab.
+   `https://<codespace>-8888.app.github.dev/lab?token=…` URL it prints, for JupyterLab.
 
 ### Binder
 
