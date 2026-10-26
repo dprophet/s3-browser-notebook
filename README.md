@@ -6,13 +6,18 @@
 A file explorer for an S3 bucket, running in a Jupyter notebook, plus two notebooks that do the
 same things from code. Sign in with an OpenID Connect provider (OAuth 2.0 device flow), exchange
 the token for a temporary credential with STS `AssumeRoleWithWebIdentity`, then use any S3
-endpoint that accepts it.
+endpoint that accepts it. The data the engineer notebooks write is laid out for
+[Trino](https://trino.io) and [Apache Spark](https://spark.apache.org), the main engines that query
+data in S3.
 
 ```
  you ──sign in──▶ OIDC provider ──ID token──▶ STS ──▶ temporary credential (1 hour, one role)
                                                           │
                                                           ▼
-                                               any standard S3 client ──▶ S3 endpoint
+                                    any standard S3 client: Trino, Spark, boto3, pandas, …
+                                                          │
+                                                          ▼
+                                                     S3 endpoint
 ```
 
 | Notebook | What it shows |
@@ -24,6 +29,27 @@ endpoint that accepts it.
 All three read the same config and share the credential cache (`~/.cache/s3-assumerole/`), so one
 sign-in covers them. The two engineer notebooks are self-contained; the explorer's code is in
 [`s3_explorer/`](s3_explorer).
+
+## Trino and Spark
+
+[Trino](https://trino.io) ([trinodb/trino](https://github.com/trinodb/trino)) and
+[Apache Spark](https://spark.apache.org) are the main targets for data in S3. The engineer notebooks
+write their dataset the way both expect a table: Parquet, partitioned by `trade_date` in the Hive
+layout.
+
+```
+s3://<bucket>/s3-demo/<run id>/trades_parquet/trade_date=2026-10-19/part-….parquet
+                                              trade_date=2026-10-20/part-….parquet
+                                              …
+```
+
+- **Spark**: [`s3-pyspark-demo.ipynb`](s3-pyspark-demo.ipynb) writes and reads it through Hadoop's
+  S3A connector with the temporary credential. The S3A settings in its *Connect* step are the ones a
+  Spark job needs for the same S3 endpoint.
+- **Trino**: point a Hive or Iceberg catalog's S3 file system at the same S3 endpoint, with
+  path-style access, and register the prefix as an external table partitioned by `trade_date`.
+  Trino reads with the credentials its catalog is configured with; the one-hour credential from
+  these notebooks suits interactive work, not a long-running server.
 
 ## What you need
 
