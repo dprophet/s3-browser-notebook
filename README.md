@@ -11,7 +11,7 @@ endpoint that accepts it. The data the engineer notebooks write is laid out for
 data in S3.
 
 ```
- you ──sign in──▶ OIDC provider ──ID token──▶ STS ──▶ temporary credential (1 hour, one role)
+ you ──sign in──▶ OIDC provider ──ID token──▶ STS ──▶ temporary credential (2 hours, one role)
                                                           │
                                                           ▼
                                     any standard S3 client: Trino, Spark, boto3, pandas, …
@@ -48,7 +48,7 @@ s3://<bucket>/s3-demo/<run id>/trades_parquet/trade_date=2026-10-19/part-….par
   Spark job needs for the same S3 endpoint.
 - **Trino**: point a Hive or Iceberg catalog's S3 file system at the same S3 endpoint, with
   path-style access, and register the prefix as an external table partitioned by `trade_date`.
-  Trino reads with the credentials its catalog is configured with; the one-hour credential from
+  Trino reads with the credentials its catalog is configured with; the two-hour credential from
   these notebooks suits interactive work, not a long-running server.
 
 ## What you need
@@ -83,7 +83,8 @@ chmod 600 .secrets/credentials.json
 | `bucket` | The bucket the notebooks use |
 
 Optional: `provider_id` (the `ProviderId` parameter of `AssumeRoleWithWebIdentity`, if your STS wants
-one) and `extra_buckets` (more buckets to offer in the explorer).
+one), `duration_seconds` (how long the credential lasts; default `7200`, two hours. The role must
+allow it: AWS roles allow `3600` unless their maximum session duration is raised) and `extra_buckets` (more buckets to offer in the explorer).
 
 Instead of the file, the same JSON can be passed base64-encoded in the environment variable
 `S3_ASSUMEROLE_CONFIG_B64`; when it is set it wins over the file. The notebooks never print the
@@ -134,7 +135,7 @@ it opens (the link is shown in the notebook too), unless a cached credential is 
   you approve it in any browser, and the provider returns an ID token. `client_secret` is sent only
   if the config has one.
 - **STS** `AssumeRoleWithWebIdentity` exchanges that token for an access key, secret key and
-  session token for `role_arn`, valid for an hour.
+  session token for `role_arn`, valid for two hours by default (`duration_seconds`).
 - **Cache**: the credential is kept in `~/.cache/s3-assumerole/` (directory 0700, file 0600) until
   the session token's JWT `exp`, so re-running a notebook or restarting the kernel skips the
   sign-in. The engineer notebooks only reuse a credential with at least 15 minutes left.

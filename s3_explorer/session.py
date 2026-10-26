@@ -36,11 +36,13 @@ from .cache import CredentialCache, jwt_claims
 
 REQUIRED = ("client_id", "oidc_issuer", "sts_endpoint", "s3_endpoint", "role_arn", "bucket")
 # provider_id: the ProviderId parameter of AssumeRoleWithWebIdentity, if your STS wants one.
+# duration_seconds: how long the credential lasts (DurationSeconds). The role must allow it;
+# AWS roles allow one hour unless their maximum session duration is raised.
 # sts_via / s3_endpoint_via: a proxy for that one service. Missing or null means direct;
 # http(s)_proxy from the environment is never used.
 # ca_bundle: only for a service behind a proxy, which re-signs TLS with its own CA. Direct
 # connections use the public CAs (certifi).
-OPTIONAL = {"provider_id": None, "extra_buckets": [], "sts_via": None, "s3_endpoint_via": None,
+OPTIONAL = {"provider_id": None, "duration_seconds": 7200, "extra_buckets": [], "sts_via": None, "s3_endpoint_via": None,
             "ca_bundle": "/etc/ssl/certs/ca-certificates.crt"}
 STS_NS = {"sts": "https://sts.amazonaws.com/doc/2011-06-15/"}
 CONFIG_ENV = "S3_ASSUMEROLE_CONFIG_B64"
@@ -188,7 +190,8 @@ class AssumeRoleSession:
         url = self.cfg["sts_endpoint"]
         form = {"Action": "AssumeRoleWithWebIdentity", "Version": "2011-06-15",
                 "RoleArn": self.role_arn, "RoleSessionName": f"s3-explorer-{uuid.uuid4().hex[:8]}",
-                "WebIdentityToken": web_identity_token, "DurationSeconds": "3600"}
+                "WebIdentityToken": web_identity_token,
+                "DurationSeconds": str(int(self.cfg["duration_seconds"]))}
         if self.cfg["provider_id"]:
             form["ProviderId"] = self.cfg["provider_id"]
         proxies, verify = self._route(self.cfg["sts_via"])
