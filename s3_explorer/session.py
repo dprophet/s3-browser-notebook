@@ -184,7 +184,8 @@ class AssumeRoleSession:
         sts = boto3.client(
             "sts", endpoint_url=self.cfg["sts_endpoint"], region_name="us-east-1", verify=verify,
             # unsigned: the web identity token is the authentication
-            config=Config(signature_version=UNSIGNED, proxies=proxies, retries={"max_attempts": 2, "mode": "standard"},
+            # no retries: a failure shows up within TIMEOUT
+            config=Config(signature_version=UNSIGNED, proxies=proxies, retries={"total_max_attempts": 1},
                           connect_timeout=TIMEOUT[0], read_timeout=TIMEOUT[1]))
         extra = {"ProviderId": self.cfg["provider_id"]} if self.cfg["provider_id"] else {}
         c = sts.assume_role_with_web_identity(
@@ -236,15 +237,19 @@ class AssumeRoleSession:
         if time.time() > dev["deadline"]:
             self._device = None
             raise TimeoutError("The sign-in link expired. Start again.")
-        body = self._request("POST", self.oidc()["token_endpoint"],
+        resp = self._request("POST", self.oidc()["token_endpoint"],
                              data={"grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                                    "device_code": dev["device_code"], **dev["auth"]},
-                             headers={"Accept": "application/json"}).json()
-        if "error" in body:
-            if body["error"] in ("authorization_pending", "slow_down"):
-                return "slow_down" if body["error"] == "slow_down" else "pending"
+                             headers={"Accept": "application/json"})
+        try:
+            body = resp.json()
+        except ValueError:
+            body = {}
+        if body.get("error") in ("authorization_pending", "slow_down"):
+            return "slow_down" if body["error"] == "slow_down" else "pending"
+        if not resp.ok or "error" in body:   # denied, expired, or not an OAuth answer at all
             self._device = None
-            raise RuntimeError(f"Sign-in failed: {body.get('error_description') or body['error']}")
+            raise RuntimeError(f"Sign-in failed: HTTP {resp.status_code} {resp.text[:500]}")
         self._device = None
         # The ID token carries the identity claims STS checks; fall back to the access token
         self._issue(body.get("id_token") or body["access_token"])
