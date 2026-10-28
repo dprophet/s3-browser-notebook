@@ -24,11 +24,11 @@ import os
 import time
 import uuid
 import webbrowser
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import boto3
 import requests
+from botocore import UNSIGNED
 from botocore.config import Config
 from IPython.display import Markdown, display
 
@@ -44,14 +44,7 @@ REQUIRED = ("client_id", "oidc_issuer", "sts_endpoint", "s3_endpoint", "role_arn
 # connections use the public CAs (certifi).
 OPTIONAL = {"provider_id": None, "duration_seconds": 7200, "extra_buckets": [], "sts_via": None, "s3_endpoint_via": None,
             "ca_bundle": "/etc/ssl/certs/ca-certificates.crt"}
-STS_NS = {"sts": "https://sts.amazonaws.com/doc/2011-06-15/"}
 CONFIG_ENV = "S3_ASSUMEROLE_CONFIG_B64"
-
-
-class StsRefused(Exception):
-    def __init__(self, code, message):
-        super().__init__(f"{code}: {message}")
-        self.code, self.message = code, message
 
 
 TIMEOUT = (10, 30)       # seconds: connect, read. A host that can't be reached fails in 10 s.
@@ -187,25 +180,17 @@ class AssumeRoleSession:
 
     def assume_role(self, web_identity_token):
         """STS AssumeRoleWithWebIdentity: the provider's token in, a temporary credential out."""
-        url = self.cfg["sts_endpoint"]
-        form = {"Action": "AssumeRoleWithWebIdentity", "Version": "2011-06-15",
-                "RoleArn": self.role_arn, "RoleSessionName": f"s3-explorer-{uuid.uuid4().hex[:8]}",
-                "WebIdentityToken": web_identity_token,
-                "DurationSeconds": str(int(self.cfg["duration_seconds"]))}
-        if self.cfg["provider_id"]:
-            form["ProviderId"] = self.cfg["provider_id"]
         proxies, verify = self._route(self.cfg["sts_via"])
-        resp = self._request("POST", url, proxies=proxies, verify=verify, data=form)
-        try:
-            root = ET.fromstring(resp.text)
-        except ET.ParseError:
-            raise StsRefused(f"HTTP {resp.status_code}", resp.text[:300]) from None
-        if root.find(".//sts:Error", STS_NS) is not None or resp.status_code != 200:
-            code = root.findtext(".//sts:Code", default=f"HTTP {resp.status_code}", namespaces=STS_NS)
-            raise StsRefused(code, root.findtext(".//sts:Message", default="", namespaces=STS_NS))
-        c = root.find(".//sts:Credentials", STS_NS)
-        return {k: c.findtext(f"sts:{k}", namespaces=STS_NS)
-                for k in ("AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration")}
+        sts = boto3.client(
+            "sts", endpoint_url=self.cfg["sts_endpoint"], region_name="us-east-1", verify=verify,
+            # unsigned: the web identity token is the authentication
+            config=Config(signature_version=UNSIGNED, proxies=proxies, retries={"max_attempts": 2, "mode": "standard"},
+                          connect_timeout=TIMEOUT[0], read_timeout=TIMEOUT[1]))
+        extra = {"ProviderId": self.cfg["provider_id"]} if self.cfg["provider_id"] else {}
+        c = sts.assume_role_with_web_identity(
+            RoleArn=self.role_arn, RoleSessionName=f"s3-explorer-{uuid.uuid4().hex[:8]}",
+            WebIdentityToken=web_identity_token, DurationSeconds=int(self.cfg["duration_seconds"]), **extra)["Credentials"]
+        return {**c, "Expiration": c["Expiration"].isoformat()}
 
     @property
     def expires_in(self):
